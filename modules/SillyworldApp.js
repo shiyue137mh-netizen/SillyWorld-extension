@@ -1,4 +1,3 @@
-import { sendMessageAsUser, Generate } from '../../../../script.js';
 import { JsonProcessor } from './lore/JsonProcessor.js';
 import { FactionProcessor } from './lore/FactionProcessor.js';
 import { WorldbookDispatcher } from './lore/WorldbookDispatcher.js';
@@ -18,6 +17,10 @@ function showStartupNotification(message, type = 'info', duration = 5000) {
 
 export class SillyworldApp {
     constructor() {
+        // Functions from global scope
+        this.sendMessageAsUser = window.parent.sendMessageAsUser;
+        this.Generate = window.parent.Generate;
+
         this.config = {
             gamestateUrl: 'http://localhost:28080/gamestate',
             loreUrl: 'http://localhost:28080/lore',
@@ -40,7 +43,8 @@ export class SillyworldApp {
         
         this.jsonProcessor = new JsonProcessor();
         this.factionProcessor = new FactionProcessor();
-        this.eventTranslator = new EventTranslator(this.config);
+        this.language = localStorage.getItem('sillyworld_language') || 'zh';
+        this.eventTranslator = new EventTranslator(this.config, this.language);
         
         this.initialize();
     }
@@ -204,6 +208,14 @@ export class SillyworldApp {
             this._currentMode = event.target.value;
             this._handleModeChange();
         });
+        const langSelect = panel.querySelector('#sillyworld-language-select');
+        langSelect.value = this.language;
+        langSelect.addEventListener('change', (event) => {
+            this.language = event.target.value;
+            localStorage.setItem('sillyworld_language', this.language);
+            this.eventTranslator.setLanguage(this.language);
+            showStartupNotification(`Language set to ${this.language === 'zh' ? '中文' : 'English'}.`, 'info');
+        });
 
         // Simulation
         panel.querySelector('#sillyworld-connect-button').addEventListener('click', () => this.startAllServices());
@@ -298,7 +310,9 @@ export class SillyworldApp {
 
         console.log('[Sillyworld] Attempting to fetch game state...');
         try {
-            const response = await fetch(this.config.gamestateUrl);
+            const url = new URL(this.config.gamestateUrl);
+            url.searchParams.append('lang', this.language);
+            const response = await fetch(url);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
             const data = await response.json();
@@ -455,7 +469,9 @@ export class SillyworldApp {
         const loreDisplay = window.parent.document.getElementById('sillyworld-lore-display');
         loreDisplay.value = '正在生成故事背景...';
         try {
-            const response = await fetch(this.config.loreUrl);
+            const url = new URL(this.config.loreUrl);
+            url.searchParams.append('lang', this.language);
+            const response = await fetch(url);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const loreData = await response.json();
             const markdown = this._formatLoreAsMarkdown(loreData);
@@ -654,8 +670,8 @@ export class SillyworldApp {
 
         try {
             console.log(`[Sillyworld] Sending message as user and then triggering generation.`);
-            await sendMessageAsUser(textToSend);
-            await Generate('normal');
+            await this.sendMessageAsUser(textToSend);
+            await this.Generate('normal');
             showStartupNotification('Narrative sent successfully!', 'success');
             activeTimeline.narrativeToSend = '';
             activeTimeline.lastNarrative = '';
