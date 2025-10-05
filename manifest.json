@@ -1,0 +1,8 @@
+{
+  "display_name": "Sillyworld Bridge",
+  "author": "YourName",
+  "version": "0.1.0",
+  "description": "Connects SillyTavern to a local Rimworld server to sync game state and events.",
+  "js": "script.js",
+  "css": "style.css"
+}

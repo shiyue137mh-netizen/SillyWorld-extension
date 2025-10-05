@@ -1,0 +1,52 @@
+<div id="sillyworld-bridge-panel" class="sillyworld-bridge-panel" style="display: none;">
+    <div class="sillyworld-bridge-header">
+        <span>Silly世界桥接</span>
+        <div class="sillyworld-bridge-close">&times;</div>
+    </div>
+    <div class="sillyworld-bridge-content">
+        <div class="sillyworld-setting-row">
+            <label for="sillyworld-mode-select">运行模式:</label>
+            <select id="sillyworld-mode-select">
+                <option value="simulation" selected>模拟模式</option>
+                <option value="story">故事模式</option>
+            </select>
+        </div>
+        <hr>
+
+        <!-- Simulation Mode Container -->
+        <div id="sillyworld-simulation-mode-container">
+            <button id="sillyworld-connect-button" class="sillyworld-bridge-button">连接到游戏</button>
+            <hr>
+            <h4>时间线管理:</h4>
+            <div class="sillyworld-setting-row">
+                <label for="sillyworld-timeline-select">当前时间线:</label>
+                <select id="sillyworld-timeline-select"></select>
+                <button id="sillyworld-switch-timeline" class="sillyworld-bridge-button sillyworld-inline-button">切换</button>
+            </div>
+            <hr>
+            <button id="sillyworld-create-worldbook" class="sillyworld-bridge-button">创建/绑定世界书</button>
+            <button id="sillyworld-update-worldbook" class="sillyworld-bridge-button">手动更新世界书</button>
+            <hr>
+            <h4>待处理叙事:</h4>
+            <textarea id="sillyworld-narrative-display" readonly rows="5" placeholder="等待事件中..."></textarea>
+            <div class="sillyworld-setting-row">
+                <input type="checkbox" id="sillyworld-auto-send">
+                <label for="sillyworld-auto-send">自动发送并触发</label>
+            </div>
+            <button id="sillyworld-send-narrative" class="sillyworld-bridge-button">使用事件触发AI</button>
+            <button id="sillyworld-copy-narrative" class="sillyworld-bridge-button">复制叙事</button>
+            <hr>
+            <h4>实时游戏状态:</h4>
+            <pre id="sillyworld-gamestate-display">等待数据中...</pre>
+        </div>
+
+        <!-- Story Mode Container -->
+        <div id="sillyworld-story-mode-container" style="display: none;">
+            <button id="sillyworld-generate-lore" class="sillyworld-bridge-button">生成故事背景</button>
+            <hr>
+            <h4>故事背景 (Markdown):</h4>
+            <textarea id="sillyworld-lore-display" rows="15" placeholder="点击按钮生成..."></textarea>
+            <button id="sillyworld-copy-lore" class="sillyworld-bridge-button">复制背景</button>
+        </div>
+    </div>
+</div>
