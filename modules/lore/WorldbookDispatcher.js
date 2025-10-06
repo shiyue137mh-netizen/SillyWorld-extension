@@ -11,13 +11,13 @@ export class WorldbookDispatcher {
         this.mapProcessor = new MapProcessor();
     }
 
-    async dispatch(gameState) {
+    async dispatch(gameState, worldbookName) {
         if (!gameState) return;
 
         const { slimmedState } = this.jsonProcessor.process(gameState);
 
         // --- Pawn Lifecycle Management (The final, robust solution) ---
-        await this.synchronizePawnEntries(slimmedState);
+        await this.synchronizePawnEntries(slimmedState, worldbookName);
 
         // --- Other Entries ---
         await this.processOverview(slimmedState);
@@ -35,8 +35,8 @@ export class WorldbookDispatcher {
         await this.processTales(slimmedState.Tales);
     }
 
-    async synchronizePawnEntries(state) {
-        const allBookEntries = await this.app.TavernHelper.getWorldbook(this.config.worldbookName);
+    async synchronizePawnEntries(state, worldbookName) {
+        const allBookEntries = await this.app.TavernHelper.getWorldbook(worldbookName);
         const existingPawnEntries = allBookEntries.filter(entry => /^\[(Pawn|Hostile|Friendly)\]/.test(entry.name));
         const existingPawnMap = new Map(existingPawnEntries.map(e => [e.name, e]));
 
@@ -93,7 +93,7 @@ export class WorldbookDispatcher {
 
         // Perform batch operations
         if (entriesToRemove.length > 0) {
-            await this.app.TavernHelper.removeWorldbookEntries(this.config.worldbookName, entriesToRemove);
+            await this.app.TavernHelper.removeWorldbookEntries(worldbookName, entriesToRemove);
         }
         for (const { name, content, options } of entriesToUpdate) {
             await this.app.createOrUpdateEntry(name, content, options);
@@ -186,7 +186,7 @@ export class WorldbookDispatcher {
         }
         for (const quest of quests) {
             await this.app.createOrUpdateEntry(`[Quest] ${quest.Name}`, JSON.stringify(quest, null, 2), {
-                enabled: quest.State === 'Active',
+                enabled: true,
                 strategy: { type: 'constant' }
             });
         }

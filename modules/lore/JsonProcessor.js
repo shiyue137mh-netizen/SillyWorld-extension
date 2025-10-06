@@ -19,7 +19,6 @@ export class JsonProcessor {
             // Fields to truncate to a certain length
             fieldsToTruncate: {
                 'Summary': 150,
-                'Description': 120,
             },
             // Keys for identifying unique items in an array to remove duplicates
             deduplicationKeys: {

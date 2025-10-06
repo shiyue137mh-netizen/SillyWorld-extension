@@ -1,3 +1,4 @@
+import { sendMessageAsUser, Generate } from '/script.js';
 import { JsonProcessor } from './lore/JsonProcessor.js';
 import { FactionProcessor } from './lore/FactionProcessor.js';
 import { WorldbookDispatcher } from './lore/WorldbookDispatcher.js';
@@ -17,9 +18,7 @@ function showStartupNotification(message, type = 'info', duration = 5000) {
 
 export class SillyworldApp {
     constructor() {
-        // Functions from global scope
-        this.sendMessageAsUser = window.parent.sendMessageAsUser;
-        this.Generate = window.parent.Generate;
+        // Functions from global scope are now called via context where needed.
 
         this.config = {
             gamestateUrl: 'http://localhost:28080/gamestate',
@@ -40,6 +39,7 @@ export class SillyworldApp {
         this.pollIntervalId = null;
         this._manualDisconnect = false;
         this.isChatReady = false;
+        this._isInternalUpdate = false;
         
         this.jsonProcessor = new JsonProcessor();
         this.factionProcessor = new FactionProcessor();
@@ -68,6 +68,10 @@ export class SillyworldApp {
     }
 
     onChatChanged() {
+        if (this._isInternalUpdate) {
+            console.log('[Sillyworld] CHAT_CHANGED event ignored during internal update.');
+            return;
+        }
         const context = window.parent.SillyTavern.getContext();
         const isChatActive = !!(context.characterId || context.groupId);
 
@@ -84,11 +88,12 @@ export class SillyworldApp {
 
     // ---- New Timeline and State Management ----
 
-    _createTimeline(worldId, baseTimeline = null, forkTick = 0) {
+    _createTimeline(worldId, dateString, baseTimeline = null, forkTick = 0) {
         const newTimelineId = Date.now().toString();
         const newTimeline = {
             id: newTimelineId,
             worldId: worldId,
+            creationDate: dateString || new Date().toLocaleString(),
             events: [],
             chatFile: `${worldId}-${newTimelineId}.jsonl`,
             lastEventSendTick: 0,
@@ -150,7 +155,7 @@ export class SillyworldApp {
             const timeline = world.timelines[timelineId];
             const option = document.createElement('option');
             option.value = timeline.id;
-            option.textContent = `Timeline ${timeline.id.substring(0, 5)}... (Tick: ${timeline.lastEventSendTick})`;
+            option.textContent = `Save: ${timeline.creationDate} (ID: ${timeline.id.substring(0, 5)}...)`;
             if (timeline.id === this.activeTimelineId) {
                 option.selected = true;
             }
@@ -287,9 +292,8 @@ export class SillyworldApp {
     
     startPolling() {
         this.stopPolling();
-        console.log('[Sillyworld] Starting GameState polling...');
-        this.fetchGameState(true); // Initial fetch
-        this.pollIntervalId = setInterval(() => this.fetchGameState(false), this.config.pollIntervalMs);
+        console.log('[Sillyworld] Performing initial GameState fetch...');
+        this.fetchGameState(true); // Initial fetch only
     }
 
     stopPolling() {
@@ -300,15 +304,8 @@ export class SillyworldApp {
         }
     }
 
-    async fetchGameState(isInitial = false) {
-        const activeTimeline = this._getActiveTimeline();
-        if (!activeTimeline) {
-            // Don't show an error, just wait for a SAVE_LOADED event to create a timeline.
-            console.log('[Sillyworld] No active timeline, skipping gamestate fetch.');
-            return;
-        }
-
-        console.log('[Sillyworld] Attempting to fetch game state...');
+    async fetchGameState(isInitial = false, shouldUpdateWorldbook = true) {
+        console.log(`[Sillyworld] Attempting to fetch game state... (Update Worldbook: ${shouldUpdateWorldbook})`);
         try {
             const url = new URL(this.config.gamestateUrl);
             url.searchParams.append('lang', this.language);
@@ -316,13 +313,37 @@ export class SillyworldApp {
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
             const data = await response.json();
-            const dataString = JSON.stringify(data);
+            
+            // If there's no active timeline, this fetch will bootstrap the state.
+            if (!this._getActiveTimeline()) {
+                console.log('[Sillyworld] No active timeline. Bootstrapping from fetched gamestate.');
+                if (data.World?.PlanetName && data.Time?.GameTicks && data.Time?.DateString) {
+                    // This will create the first timeline and set it as active.
+                    await this._handleSaveLoaded({
+                        worldId: data.World.PlanetName,
+                        tick: data.Time.GameTicks,
+                        dateString: data.Time.DateString
+                    });
+                } else {
+                    console.error('[Sillyworld] Fetched gamestate is missing necessary data for bootstrapping (worldId, tick, dateString).');
+                    showStartupNotification('Game data is incomplete. Cannot initialize.', 'error');
+                    return;
+                }
+            }
 
+            // Now, get the timeline again, it should exist.
+            const activeTimeline = this._getActiveTimeline();
+            if (!activeTimeline) {
+                 console.error('[Sillyworld] CRITICAL: Timeline is still null after bootstrapping attempt.');
+                 return;
+            }
+
+            const dataString = JSON.stringify(data);
             if (activeTimeline.lastGameStateString === dataString) {
-                return;
+                return; // No changes
             }
             
-            console.log('[Sillyworld] Game state fetched successfully.');
+            console.log('[Sillyworld] Game state fetched and updated successfully.');
             activeTimeline.cachedGameState = data;
             activeTimeline.lastGameStateString = dataString;
             
@@ -330,13 +351,14 @@ export class SillyworldApp {
             if (display) display.textContent = JSON.stringify(data, null, 2);
 
             // Automatically update the worldbook on every successful fetch in simulation mode
-            if (this._currentMode === 'simulation') {
+            if (this._currentMode === 'simulation' && shouldUpdateWorldbook) {
                 await this.updateWorldbook(data);
             }
         } catch (error) {
             console.error("[Sillyworld] fetchGameState failed.", error);
-            // Don't show a popup for fetch errors, they are common if the game isn't running.
-            // showStartupNotification(`Failed to fetch game state: ${error.message}`, 'error');
+            if (isInitial) {
+                showStartupNotification(`Failed to connect to game. Is it running with the mod loaded? (${error.message})`, 'error');
+            }
         }
     }
 
@@ -392,8 +414,14 @@ export class SillyworldApp {
         const worldbookName = `${this.config.worldbookPrefix} ${activeTimeline.worldId}`;
         console.log(`[Sillyworld] Updating worldbook "${worldbookName}" with new game state...`);
         
-        await this.ensureWorldbook(worldbookName);
-        await this.worldbookDispatcher.dispatch(gameState, worldbookName);
+        this._isInternalUpdate = true;
+        try {
+            await this.ensureWorldbook(worldbookName);
+            await this.worldbookDispatcher.dispatch(gameState, worldbookName);
+        } finally {
+            this._isInternalUpdate = false;
+        }
+        
         showStartupNotification('Worldbook updated with latest game state.', 'success');
         console.log('[Sillyworld] Worldbook update dispatch complete.');
     }
@@ -425,7 +453,8 @@ export class SillyworldApp {
                         if (activeTimeline && eventData.payload) {
                             // The events are now part of the timeline object
                             activeTimeline.events.push(eventData.payload);
-                            this.checkAndFlushEventBuffer(activeTimeline, eventData.payload.endTime);
+                            // Per user instruction, the mod controls the timing. The extension should process every event immediately.
+                            this.flushEventBuffer(activeTimeline, eventData.payload.endTime);
                         }
                         break;
                 }
@@ -579,7 +608,7 @@ export class SillyworldApp {
     }
 
     async _handleSaveLoaded(payload) {
-        const { worldId, tick } = payload;
+        const { worldId, tick, dateString } = payload;
         console.log(`[Sillyworld] Received SAVE_LOADED event for world "${worldId}" at tick ${tick}.`);
 
         // 1. Ensure world exists
@@ -611,12 +640,12 @@ export class SillyworldApp {
         } else if (bestTimeline) {
             // Fork from the best match
             console.log(`[Sillyworld] Forking new timeline from ${bestTimeline.id} at tick ${tick}.`);
-            targetTimeline = this._createTimeline(worldId, bestTimeline, tick);
+            targetTimeline = this._createTimeline(worldId, dateString, bestTimeline, tick);
             world.timelines[targetTimeline.id] = targetTimeline;
         } else {
             // No suitable timeline, create a fresh one
             console.log(`[Sillyworld] No suitable timeline found. Creating a new one for world "${worldId}".`);
-            targetTimeline = this._createTimeline(worldId);
+            targetTimeline = this._createTimeline(worldId, dateString);
             world.timelines[targetTimeline.id] = targetTimeline;
         }
 
@@ -670,8 +699,8 @@ export class SillyworldApp {
 
         try {
             console.log(`[Sillyworld] Sending message as user and then triggering generation.`);
-            await this.sendMessageAsUser(textToSend);
-            await this.Generate('normal');
+            await sendMessageAsUser(textToSend);
+            await Generate('normal');
             showStartupNotification('Narrative sent successfully!', 'success');
             activeTimeline.narrativeToSend = '';
             activeTimeline.lastNarrative = '';
@@ -683,26 +712,14 @@ export class SillyworldApp {
         }
     }
 
-    checkAndFlushEventBuffer(timeline, summaryEndTime) {
-        if (timeline.events.length === 0) return;
-        
-        const ticksPerHour = 2500;
-        // Use a slightly larger interval to ensure it triggers reliably
-        const flushIntervalTicks = (4 * ticksPerHour) - 100; 
-
-        // The start time of the first event in the buffer
-        const bufferStartTime = timeline.events[0].startTime;
-
-        if (summaryEndTime > bufferStartTime + flushIntervalTicks) {
-            this.flushEventBuffer(timeline, summaryEndTime);
-        }
-    }
-
     async flushEventBuffer(timeline, flushTick) {
         if (timeline.events.length === 0) return;
 
         console.log('[Sillyworld] Flushing event buffer. Fetching latest game state first...');
-        await this.fetchGameState(false);
+        // The core principle: get the absolute latest state before processing the event narrative.
+        // This will fetch the state and then trigger the worldbook update internally.
+        // The internal update is guarded by a flag to prevent re-entrant fetches.
+        await this.fetchGameState(false, true);
         
         console.log(`[Sillyworld] Flushing ${timeline.events.length} summaries for timeline ${timeline.id}.`);
         const translatedSummaries = timeline.events.map(summary => this.eventTranslator.translateSummary(summary));
