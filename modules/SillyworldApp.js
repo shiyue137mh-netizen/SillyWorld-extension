@@ -722,7 +722,8 @@ export class SillyworldApp {
         await this.fetchGameState(false, true);
         
         console.log(`[Sillyworld] Flushing ${timeline.events.length} summaries for timeline ${timeline.id}.`);
-        const translatedSummaries = timeline.events.map(summary => this.eventTranslator.translateSummary(summary));
+        const mainMapName = timeline.cachedGameState?.Map?.MapName;
+        const translatedSummaries = timeline.events.map(summary => this.eventTranslator.translateSummary(summary, mainMapName));
         const finalMessage = translatedSummaries.join('\n\n');
 
         timeline.lastNarrative = finalMessage; 

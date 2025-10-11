@@ -14,7 +14,7 @@ export class WorldbookDispatcher {
     async dispatch(gameState, worldbookName) {
         if (!gameState) return;
 
-        const { slimmedState } = this.jsonProcessor.process(gameState);
+        const { slimmedState, universalLorebook } = this.jsonProcessor.process(gameState);
 
         // --- Pawn Lifecycle Management (The final, robust solution) ---
         await this.synchronizePawnEntries(slimmedState, worldbookName);
@@ -24,6 +24,7 @@ export class WorldbookDispatcher {
         await this.processMapDescription(slimmedState.DescriptiveMap);
         await this.processMapEvents(slimmedState.Map);
         await this.processColonistRoster(slimmedState.PlayerPawns);
+        await this.processPawnGroupRosters(slimmedState.Map?.PawnGroups);
         await this.processResearch(slimmedState.Research);
         await this.processAlerts(slimmedState.Alerts);
         await this.processAnomaly(slimmedState.Anomaly);
@@ -33,6 +34,7 @@ export class WorldbookDispatcher {
         await this.processXenotypes(slimmedState.Xenotypes);
         await this.processQuests(slimmedState.Quests);
         await this.processTales(slimmedState.Tales);
+        await this.processUniversalLorebook(universalLorebook);
     }
 
     async synchronizePawnEntries(state, worldbookName) {
@@ -105,6 +107,14 @@ export class WorldbookDispatcher {
 
     // --- Other Processing Methods (Unchanged) ---
 
+    async processUniversalLorebook(lorebookContent) {
+        if (lorebookContent && lorebookContent.trim() !== '') {
+            await this.app.createOrUpdateEntry('[World] Universal Lorebook', lorebookContent, {
+                strategy: { type: 'constant' }
+            });
+        }
+    }
+
     async processFactions(factions, world) {
         if (!factions) return;
         const factionEntries = this.factionProcessor.process(factions, world);
@@ -135,14 +145,44 @@ export class WorldbookDispatcher {
     }
 
     async processColonistRoster(pawns) {
-        if (!pawns || pawns.length === 0) return;
         const roster = {
-            ColonistCount: pawns.length,
-            Colonists: pawns.map(p => p.FullName)
+            ColonistCount: pawns?.length ?? 0,
+            Colonists: pawns?.map(p => p.FullName) ?? []
         };
         await this.app.createOrUpdateEntry('[World] Colonist Roster', JSON.stringify(roster, null, 2), {
             strategy: { type: 'constant' }
         });
+    }
+
+    async processPawnGroupRosters(pawnGroups) {
+        const groupTypesToProcess = ['Trader', 'Visitor', 'Raider', 'AllyInBattle', 'Beggar', 'Guard'];
+        const grouped = new Map();
+
+        (pawnGroups || []).forEach(group => {
+            if (!grouped.has(group.GroupName)) {
+                grouped.set(group.GroupName, []);
+            }
+            grouped.get(group.GroupName).push(...(group.Members || []).map(p => p.FullName));
+        });
+
+        for (const type of groupTypesToProcess) {
+            const members = grouped.get(type);
+            const entryName = `[World] ${type} Roster`;
+            let content;
+
+            if (members && members.length > 0) {
+                content = JSON.stringify({
+                    Count: members.length,
+                    Members: members
+                }, null, 2);
+            } else {
+                content = JSON.stringify({ Count: 0, Members: [] }, null, 2);
+            }
+            
+            await this.app.createOrUpdateEntry(entryName, content, {
+                strategy: { type: 'constant' }
+            });
+        }
     }
 
     async processResearch(research) {

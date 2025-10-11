@@ -44,9 +44,14 @@ export class JsonProcessor {
         // Create a deep copy to avoid modifying the original object
         const slimmedState = JSON.parse(JSON.stringify(gameState));
 
+        const universalLorebook = slimmedState.UniversalLorebook;
+        if (universalLorebook) {
+            delete slimmedState.UniversalLorebook;
+        }
+
         this.traverseAndSlim(slimmedState, keywords);
 
-        return { slimmedState, keywords: [...keywords] };
+        return { slimmedState, keywords: [...keywords], universalLorebook };
     }
 
     /**

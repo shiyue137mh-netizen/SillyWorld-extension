@@ -19,6 +19,11 @@ export class EventTranslator {
                 tradeSold: (items) => `卖出了 ${items}`,
                 tradeBought: (items) => `买入了 ${items}`,
                 draftStatusChanged: (t, s, d) => `${t}, ${s} ${d ? '已被征召' : '解除了征召状态'}。`,
+                groupLeftMap: (t, c, n, f) => `${t}, 来自 ${f} 的 ${n} (${c}人) 离开了地图。`,
+                gravshipLaunch: (t, s, o, d, p) => `${t}, ${s} 从 ${o} 起飞，目的地是 ${d}。${p ? ` 乘客: ${p}。` : ''}`,
+                gravshipLand: (t, s, d, p) => `${t}, ${s} 在 ${d} 着陆。${p ? ` 乘客: ${p}。` : ''}`,
+                mapPrefix: (map) => `[${map}] `,
+                atLocation: (loc) => ` 在 ${loc}`,
                 defaultEvent: (t, e) => `${t}, 发生了 ${e} 事件。`,
                 defaultEventWithDetails: (t, e, d) => `${t}, 发生了 **${e}** 事件:\n\`\`\`json\n${d}\n\`\`\``,
             },
@@ -39,6 +44,11 @@ export class EventTranslator {
                 tradeSold: (items) => `Sold ${items}`,
                 tradeBought: (items) => `Bought ${items}`,
                 draftStatusChanged: (t, s, d) => `${t}, ${s} has been ${d ? 'drafted' : 'undrafted'}.`,
+                groupLeftMap: (t, c, n, f) => `${t}, ${n} (${c} people) from ${f} have left the map.`,
+                gravshipLaunch: (t, s, o, d, p) => `${t}, ${s} launched from ${o}, destination: ${d}.${p ? ` Passengers: ${p}.` : ''}`,
+                gravshipLand: (t, s, d, p) => `${t}, ${s} landed at ${d}.${p ? ` Passengers: ${p}.` : ''}`,
+                mapPrefix: (map) => `[${map}] `,
+                atLocation: (loc) => ` at ${loc}`,
                 defaultEvent: (t, e) => `${t}, a ${e} event occurred.`,
                 defaultEventWithDetails: (t, e, d) => `${t}, a **${e}** event occurred:\n\`\`\`json\n${d}\n\`\`\``,
             }
@@ -51,7 +61,7 @@ export class EventTranslator {
         this.T = this.translations[language] || this.translations.en;
     }
 
-    translateSummary(summary) {
+    translateSummary(summary, mainMapName) {
         if (!summary || !summary.events || summary.events.length === 0) {
             return '';
         }
@@ -60,76 +70,94 @@ export class EventTranslator {
         const timeHeader = this.T.timeHeader(startDateString, endDateString, startTimeOfDay, endTimeOfDay);
 
         let narrative = `${timeHeader}\n\n`;
-        const translatedEvents = summary.events.map(event => this.translateSingleEvent(event)).filter(Boolean);
+        const translatedEvents = summary.events.map(event => this.translateSingleEvent(event, mainMapName)).filter(Boolean);
         narrative += translatedEvents.join('\n');
 
         return narrative;
     }
 
-    translateSingleEvent(event) {
+    _formatLocation(location) {
+        if (!location) return '';
+        let locStr = location.Room || location.Zone || location.OutdoorsLabel;
+        if (locStr) {
+            return this.T.atLocation(locStr);
+        }
+        return '';
+    }
+
+    translateSingleEvent(event, mainMapName) {
         if (!event || !event.Type) return null;
 
         const time = event.TimeOfDay || this.formatTime(event.Tick);
         const participants = event.Participants || [];
         const details = event.Details || {};
+        const location = this._formatLocation(event.Location);
+        const mapPrefix = (event.MapName && event.MapName !== mainMapName) ? this.T.mapPrefix(event.MapName) : '';
 
         const getPawn = (role) => participants.find(p => p.Role === role)?.PawnName;
+
+        let translatedEvent = null;
 
         switch (event.Type) {
             case 'JobCompleted': {
                 const actor = getPawn('executor');
                 const jobName = details.JobName?.replace(/。$/, '') || this.T.jobCompletedFallback;
-                return this.T.jobCompleted(time, actor, jobName);
+                translatedEvent = this.T.jobCompleted(time, actor, jobName);
+                break;
             }
             case 'SocialInteraction': {
                 const log = details.InteractionLog?.replace(/<color=#[^>]+>/g, '').replace(/<\/color>/g, '');
-                if (log) return `${time}, ${log}`;
-                const initiator = getPawn('initiator');
-                const recipient = getPawn('recipient');
-                if (initiator && recipient) return this.T.socialInteraction(time, initiator, recipient);
-                return null;
+                if (log) {
+                    translatedEvent = `${time}, ${log}`;
+                } else {
+                    const initiator = getPawn('initiator');
+                    const recipient = getPawn('recipient');
+                    if (initiator && recipient) translatedEvent = this.T.socialInteraction(time, initiator, recipient);
+                }
+                break;
             }
             case 'NotificationReceived': {
                  const content = details.Content || details.Label;
-                 if (content) return `${time}, ${content}`;
-                 return null;
+                 if (content) translatedEvent = `${time}, ${content}`;
+                 break;
             }
             case 'PawnDied': {
                 const victim = getPawn('victim');
                 const killer = getPawn('killer');
                 const weapon = details.Weapon || this.T.pawnDiedFallbackWeapon;
-                if (victim) return this.T.pawnDied(time, victim, killer, weapon);
-                return null;
+                if (victim) translatedEvent = this.T.pawnDied(time, victim, killer, weapon);
+                break;
             }
             case 'PawnBorn': {
                 const mother = getPawn('mother');
                 const father = getPawn('father');
                 const child = getPawn('child');
-                return this.T.pawnBorn(time, mother, father, child);
+                translatedEvent = this.T.pawnBorn(time, mother, father, child);
+                break;
             }
             case 'PawnRelationThresholdChanged': {
                 const subject = getPawn('subject');
                 const object = getPawn('object');
-                if (subject && object) return this.T.relationChanged(time, subject, object, details.NewStatus);
-                return null;
+                if (subject && object) translatedEvent = this.T.relationChanged(time, subject, object, details.NewStatus);
+                break;
             }
             case 'PawnHealthChanged': {
                 const subject = getPawn('subject');
-                if (subject) return this.T.healthChanged(time, subject, details.ChangeType, details.Hediff);
-                return null;
+                if (subject) translatedEvent = this.T.healthChanged(time, subject, details.ChangeType, details.Hediff);
+                break;
             }
             case 'SexActFinished': {
                 const initiator = getPawn('Initiator');
                 const partner = getPawn('Partner');
                 const type = details.InteractionType || this.T.sexActFinishedFallback;
-                if (initiator && partner) return this.T.sexActFinished(time, initiator, partner, type);
-                return null;
+                if (initiator && partner) translatedEvent = this.T.sexActFinished(time, initiator, partner, type);
+                break;
             }
              case 'PawnImpregnated': {
                 const mother = getPawn('Subject');
                 const father = getPawn('Object');
-                if (mother) return this.T.impregnated(time, mother, father);
-                return null;
+                if (mother) translatedEvent = this.T.impregnated(time, mother, father);
+                break;
             }
             case 'TradeCompleted': {
                 const negotiator = getPawn('Negotiator');
@@ -146,19 +174,46 @@ export class EventTranslator {
                     tradeParts.push(this.T.tradeBought(boughtStr));
                 }
                 const tradeDetails = tradeParts.join(', ');
-                return this.T.tradeCompleted(time, negotiator, traderName, tradeDetails);
+                translatedEvent = this.T.tradeCompleted(time, negotiator, traderName, tradeDetails);
+                break;
             }
             case 'PawnDraftStatusChanged': {
                 const subject = getPawn('subject');
-                if (subject) return this.T.draftStatusChanged(time, subject, details.IsDrafted);
-                return null;
+                if (subject) translatedEvent = this.T.draftStatusChanged(time, subject, details.IsDrafted);
+                break;
+            }
+            case 'GroupLeftMap': {
+                const { GroupName, FactionName, PawnCount } = details;
+                if (GroupName && FactionName && PawnCount > 0) {
+                    translatedEvent = this.T.groupLeftMap(time, PawnCount, GroupName, FactionName);
+                }
+                break;
+            }
+            case 'GravshipActivity': {
+                const { ActivityType, ShipName, Origin, Destination, Passengers } = details;
+                const passengerStr = Passengers?.join(', ');
+                if (ActivityType === 'Launch') {
+                    translatedEvent = this.T.gravshipLaunch(time, ShipName, Origin, Destination, passengerStr);
+                } else if (ActivityType === 'Land') {
+                    translatedEvent = this.T.gravshipLand(time, ShipName, Destination, passengerStr);
+                }
+                break;
             }
             default: {
                 const detailsJson = JSON.stringify(details, null, 2);
-                if (Object.keys(details).length === 0) return this.T.defaultEvent(time, event.Type);
-                return this.T.defaultEventWithDetails(time, event.Type, detailsJson);
+                if (Object.keys(details).length === 0) {
+                    translatedEvent = this.T.defaultEvent(time, event.Type);
+                } else {
+                    translatedEvent = this.T.defaultEventWithDetails(time, event.Type, detailsJson);
+                }
+                break;
             }
         }
+
+        if (translatedEvent) {
+            return mapPrefix + translatedEvent + location;
+        }
+        return null;
     }
 
     formatTime(tick) {
